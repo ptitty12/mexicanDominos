@@ -14,11 +14,13 @@
   --tile-edge: #b9b09b;
   --tile-line: #4a4640;
   --radius: 14px;
-  color-scheme: light dark;
+  color-scheme: light;
 }
 
+/* Dark values, twice: once for a dark system setting (unless the page has been
+   told to be light), once for an explicit dark choice by whatever hosts it. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --page: #101614;
     --card: #1a2320;
     --ink: #e9eeeb;
@@ -31,7 +33,24 @@
     --warn-soft: #3a2c14;
     --danger: #f08a8f;
     --tile-edge: #6f695c;
+    color-scheme: dark;
   }
+}
+
+:root[data-theme="dark"] {
+  --page: #101614;
+  --card: #1a2320;
+  --ink: #e9eeeb;
+  --muted: #9aa8a3;
+  --line: #2e3b37;
+  --accent: #3fb79a;
+  --accent-ink: #06231c;
+  --accent-soft: #1d3a33;
+  --warn: #f0b25a;
+  --warn-soft: #3a2c14;
+  --danger: #f08a8f;
+  --tile-edge: #6f695c;
+  color-scheme: dark;
 }
 
 * {
@@ -43,13 +62,16 @@ body {
   background: var(--page);
   color: var(--ink);
   font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* side gutter that also clears a phone's notch or system bar in landscape */
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
   -webkit-text-size-adjust: 100%;
 }
 
 .masthead,
 main,
 .colophon {
-  width: min(100% - 32px, 760px);
+  max-width: 760px;
   margin-inline: auto;
 }
 

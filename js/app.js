@@ -7,11 +7,10 @@ const PHOTO_SIDE = 1600;
 
 const $ = (id) => document.getElementById(id);
 
-/** @type {{hand: {a: number, b: number, unsure?: boolean}[], setMax: number, start: number, others: number[], goal: 'tiles'|'pips'}} */
-const state = Object.assign(
-  { hand: [], setMax: 12, start: 12, others: [], goal: 'tiles' },
-  loadSaved(),
-);
+const saved = loadSaved();
+
+/** @type {{hand: {a: number, b: number, unsure?: boolean}[], setMax: number, start: number, others: number[], goal: 'tiles'|'pips', example?: boolean}} */
+const state = Object.assign({ hand: [], setMax: 12, start: 12, others: [], goal: 'tiles' }, saved);
 
 function loadSaved() {
   try {
@@ -59,8 +58,8 @@ function renderHand() {
   const n = state.hand.length;
   const points = state.hand.reduce((sum, t) => sum + t.a + t.b, 0);
   $('hand-count').textContent = n
-    ? `${n} ${n === 1 ? 'tile' : 'tiles'} · ${points} points`
-    : 'No tiles yet — use a photo, or add them with +';
+    ? `${state.example ? 'Example hand · ' : ''}${n} ${n === 1 ? 'tile' : 'tiles'} · ${points} points`
+    : 'No tiles yet. Use a photo, or add them with +';
   $('hand-clear').hidden = n === 0;
 }
 
@@ -76,6 +75,7 @@ function addButton() {
 
 $('hand-clear').addEventListener('click', () => {
   state.hand = [];
+  state.example = false;
   $('photo').hidden = true;
   $('photo-add').hidden = true;
   setStatus('');
@@ -109,15 +109,19 @@ function renderEditor() {
   }
 }
 
-$('editor').querySelector('form').addEventListener('submit', () => {
+$('editor').querySelector('form').addEventListener('submit', (event) => {
+  event.preventDefault();
   const tile = { a: editor.a, b: editor.b };
   if (editor.index === null) state.hand.push(tile);
   else state.hand[editor.index] = tile;
+  state.example = false;
+  $('editor').close();
   update();
 });
 
 $('editor-delete').addEventListener('click', () => {
   state.hand.splice(editor.index, 1);
+  state.example = false;
   $('editor').close();
   update();
 });
@@ -297,23 +301,25 @@ $('photo-input').addEventListener('change', (event) => {
   if (file) readPhoto(file, appendNextPhoto);
 });
 
-$('photo-example').addEventListener('click', async () => {
-  setStatus('Loading the example…');
+$('photo-example').addEventListener('click', () => loadExample());
+
+async function loadExample({ quiet = false } = {}) {
+  if (!quiet) setStatus('Loading the example…');
   try {
     const response = await fetch('examples/hand.jpg');
     if (!response.ok) throw new Error(response.statusText);
-    readPhoto(await response.blob(), false);
+    await readPhoto(await response.blob(), false, true);
   } catch {
-    setStatus('The example photo could not be loaded.', true);
+    if (!quiet) setStatus('The example photo could not be loaded.', true);
   }
-});
+}
 
 function setStatus(text, problem = false) {
   $('photo-status').textContent = text;
   $('photo-status').classList.toggle('problem', problem);
 }
 
-async function readPhoto(file, append) {
+async function readPhoto(file, append, example = false) {
   setStatus('Reading your dominoes…');
   let source;
   try {
@@ -347,9 +353,11 @@ async function readPhoto(file, append) {
   }
   const found = tiles.map((t) => ({ a: t.a, b: t.b, unsure: !t.sure }));
   state.hand = append ? [...state.hand, ...found] : found;
+  state.example = example;
   const unsure = found.filter((t) => t.unsure).length;
   setStatus(
-    `Found ${count(tiles.length)}. Check them against the photo and tap any that are wrong.` +
+    (example ? 'This is an example photo. ' : '') +
+      `Found ${count(tiles.length)}. Check them against the photo and tap any that are wrong.` +
       (unsure ? ` ${unsure === 1 ? 'One was' : `${unsure} were`} hard to read and ${unsure === 1 ? 'is' : 'are'} outlined.` : ''),
   );
   $('photo-add').hidden = false;
@@ -406,3 +414,5 @@ function drawOutlines(ctx, tiles) {
 }
 
 update();
+// A first visit opens on the example, so the page shows what it does.
+if (!saved) loadExample({ quiet: true });
