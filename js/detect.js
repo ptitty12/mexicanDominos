@@ -25,6 +25,19 @@ export function detectDominoes(image, opts = {}) {
   const maxPips = opts.maxPips ?? 18;
   const { width, height } = image;
   const white = whiteness(image);
+
+  // Two readers. The first looks for the divider bar across each tile and
+  // counts the pips either side of it; it copes with tiles standing on edge,
+  // seen at an angle, touching or partly behind one another. The second works
+  // from tile outlines and needs no divider, so it covers sets whose divider
+  // is too faint to find, as long as the tiles lie flat and clear.
+  const byDivider = readByDividers(image, white, maxPips);
+  const byOutline = readByOutlines(white, width, height, maxPips);
+  const tiles = byDivider.length >= 2 && byDivider.length >= 0.6 * byOutline.length ? byDivider : byOutline;
+  return { tiles: readingOrder(tiles).map(({ a, b, sure, corners }) => ({ a, b, sure, corners })) };
+}
+
+function readByOutlines(white, width, height, maxPips) {
   const scale = Math.max(1, Math.max(width, height) / ANALYSIS_SIDE);
   const small = shrink(white, width, height, scale);
   const full = { px: white, w: width, h: height };
@@ -51,20 +64,444 @@ export function detectDominoes(image, opts = {}) {
   const patches = frames.map((f) => readPatch(f, full));
   const unit = median(patches.flatMap((p) => p.halves.flatMap((h) => h.compact)));
 
-  const tiles = frames.map((f, i) => {
-    const [a, b] = patches[i].halves.map((h) => countPips(h, unit));
-    return {
-      a: Math.min(a.count, maxPips),
-      b: Math.min(b.count, maxPips),
-      sure: a.sure && b.sure && a.count <= maxPips && b.count <= maxPips,
-      corners: cornersOf(f),
-      cx: f.cx,
-      cy: f.cy,
-      length: f.length,
-    };
-  });
+  return frames
+    .map((f, i) => {
+      const [a, b] = patches[i].halves.map((h) => countPips(h, unit));
+      return {
+        a: Math.min(a.count, maxPips),
+        b: Math.min(b.count, maxPips),
+        sure: a.sure && b.sure && a.count <= maxPips && b.count <= maxPips,
+        corners: cornersOf(f),
+        cx: f.cx,
+        cy: f.cy,
+        length: f.length,
+        // A blank tile still shows its divider; the back of a tile does not.
+        faceDown: a.count + b.count === 0 && !patches[i].divider,
+      };
+    })
+    .filter((t) => !t.faceDown);
+}
 
-  return { tiles: readingOrder(tiles).map(({ a, b, sure, corners }) => ({ a, b, sure, corners })) };
+// ---------------------------------------------------- divider-first reader
+
+// Dark marks on a tile face are either a divider (long, thin, black) or pips
+// (compact). Each divider is one tile; a pip belongs to the divider it sits
+// beside, on one side or the other.
+function readByDividers(image, white, maxPips) {
+  const { data, width: w, height: h } = image;
+  const cut = otsu(white, 0);
+  const hist = new Int32Array(256);
+  let bright = 0;
+  for (let i = 0; i < white.length; i++) {
+    if (white[i] > cut) {
+      hist[white[i]]++;
+      bright++;
+    }
+  }
+  let level = 255;
+  for (let seen = 0; level > cut; level--) {
+    seen += hist[level];
+    if (seen >= bright / 2) break;
+  }
+  const dark = Math.max(cut, 0.62 * level);
+
+  // Label everything darker than a tile face. The table is one huge region;
+  // marks on tiles are small ones, kept with their pixels.
+  const limit = Math.round(0.004 * w * h);
+  const label = new Int32Array(w * h);
+  const stack = new Int32Array(w * h);
+  const marks = [];
+  for (let start = 0; start < white.length; start++) {
+    if (white[start] >= dark || label[start]) continue;
+    const id = marks.length + 1;
+    let members = [];
+    let top = 0;
+    stack[top++] = start;
+    label[start] = id;
+    while (top) {
+      const i = stack[--top];
+      if (members && members.push(i) > limit) members = null;
+      const x = i % w;
+      if (x > 0 && white[i - 1] < dark && !label[i - 1]) (label[i - 1] = id), (stack[top++] = i - 1);
+      if (x < w - 1 && white[i + 1] < dark && !label[i + 1]) (label[i + 1] = id), (stack[top++] = i + 1);
+      if (i >= w && white[i - w] < dark && !label[i - w]) (label[i - w] = id), (stack[top++] = i - w);
+      if (i < w * (h - 1) && white[i + w] < dark && !label[i + w]) (label[i + w] = id), (stack[top++] = i + w);
+    }
+    // null: too big to be on a tile (table, shadow). Specks stay as empty
+    // lists: glare can break a pip into crumbs, which are still tile, not table.
+    marks.push(members && (members.length >= 12 ? members : []));
+  }
+  const onTile = (x, y) => {
+    const xi = Math.round(x);
+    const yi = Math.round(y);
+    if (xi < 0 || yi < 0 || xi >= w || yi >= h) return false;
+    const i = yi * w + xi;
+    return white[i] > cut || (label[i] > 0 && marks[label[i] - 1] !== null);
+  };
+  const isWhite = (x, y) => {
+    const xi = Math.round(x);
+    const yi = Math.round(y);
+    return xi >= 0 && yi >= 0 && xi < w && yi < h && white[yi * w + xi] > cut;
+  };
+
+  // Is the straight line between two points all one tile face? It may cross
+  // other marks, but not bare table, and not the faint shaded line where one
+  // tile's edge runs in front of another tile.
+  const clearPath = (x0, y0, x1, y1, rim) => {
+    const steps = Math.max(2, Math.round(Math.hypot(x1 - x0, y1 - y0)));
+    const kinds = new Uint8Array(steps + 1); // 0 face, 1 mark, 2 shaded, 3 table
+    const seen = new Uint8Array(steps + 1);
+    let table = 0;
+    let face = 0;
+    for (let k = 0; k <= steps; k++) {
+      const xi = Math.round(x0 + ((x1 - x0) * k) / steps);
+      const yi = Math.round(y0 + ((y1 - y0) * k) / steps);
+      if (xi < 0 || yi < 0 || xi >= w || yi >= h) {
+        kinds[k] = 3;
+      } else {
+        const i = yi * w + xi;
+        seen[k] = white[i];
+        if (label[i] > 0) kinds[k] = marks[label[i] - 1] ? 1 : 3;
+        else if (white[i] <= cut) kinds[k] = 3;
+        else if (white[i] > face) face = white[i];
+      }
+      if (kinds[k] === 3) table++;
+    }
+    if (table >= Math.max(3, 0.05 * steps)) return false;
+    // Shaded means darker than the face is along this same line, so a tile
+    // in dimmer light is not mistaken for one long edge.
+    for (let k = 0; k <= steps; k++) if (kinds[k] === 0 && seen[k] < 0.8 * face) kinds[k] = 2;
+    // Shading right beside a mark is just the soft rim of a pip, whether the
+    // line runs into the pip or only grazes past it.
+    const nearMark = (k) => {
+      const x = x0 + ((x1 - x0) * k) / steps;
+      const y = y0 + ((y1 - y0) * k) / steps;
+      for (let ring = 1; ring <= 2; ring++) {
+        const r = (rim * ring) / 2;
+        for (let a = 0; a < 8; a++) {
+          const xi = Math.round(x + r * Math.cos((a * Math.PI) / 4));
+          const yi = Math.round(y + r * Math.sin((a * Math.PI) / 4));
+          if (xi >= 0 && yi >= 0 && xi < w && yi < h && label[yi * w + xi] > 0) return true;
+        }
+      }
+      return false;
+    };
+    let run = 0;
+    for (let k = 0; k <= steps; k++) {
+      run = kinds[k] === 2 && !nearMark(k) ? run + 1 : 0;
+      if (run >= 2) return false;
+    }
+    return true;
+  };
+
+  const dividers = [];
+  const pips = [];
+  const addPip = (pixels) => {
+    if (pixels.length < 12) return;
+    const m = moments(pixels, w);
+    const r = Math.sqrt(pixels.length / Math.PI);
+    // A pip sits on a tile: around it is face, or other marks on the face.
+    let around = 0;
+    let face = 0;
+    for (let k = 0; k < 12; k++) {
+      const ang = (k * Math.PI) / 6;
+      const x = m.x + 1.9 * r * Math.cos(ang);
+      const y = m.y + 1.9 * r * Math.sin(ang);
+      if (onTile(x, y)) around++;
+      if (isWhite(x, y)) face++;
+    }
+    if (around >= 8 && face >= 3 && m.stretch <= 2.4) {
+      pips.push({ x: m.x, y: m.y, area: pixels.length, round: m.stretch <= 1.9 });
+    }
+  };
+
+  for (const members of marks) {
+    if (!members || !members.length) continue;
+    const m = moments(members, w);
+    // Thickness along the long axis, one bin per pixel of length.
+    const bins = new Int32Array(Math.ceil(m.s1 - m.s0) + 1);
+    for (const i of members) {
+      const x = i % w;
+      const y = (i - x) / w;
+      bins[Math.floor((x - m.x) * m.ux + (y - m.y) * m.uy - m.s0)]++;
+    }
+    const thick = Math.max(1, median(Array.from(bins)));
+    const length = bins.length;
+    let even = 0;
+    for (const b of bins) if (b >= 0.5 * thick && b <= 1.7 * thick) even++;
+    const barShaped = length >= 14 && length >= 3.5 * thick && even >= 0.65 * length;
+    if (!barShaped) {
+      addPip(members);
+      continue;
+    }
+    // A divider is black or grey (glare can lift it a long way from black)
+    // with tile face along both of its long sides. A strip of wooden table
+    // seen between two tiles is the same shape, but it has a colour.
+    let colour = 0;
+    let ink = 0;
+    for (const i of members) {
+      const r = data[4 * i];
+      const g = data[4 * i + 1];
+      const b = data[4 * i + 2];
+      colour += Math.max(r, g, b) - Math.min(r, g, b);
+      ink += Math.max(r, g, b);
+    }
+    colour /= members.length;
+    ink /= members.length;
+    let faceLeft = 0;
+    let faceRight = 0;
+    for (let k = 0; k < 10; k++) {
+      const along = (k / 9 - 0.5) * 0.8 * length;
+      const off = thick / 2 + 3;
+      const x = m.x + along * m.ux;
+      const y = m.y + along * m.uy;
+      if (isWhite(x - off * m.uy, y + off * m.ux)) faceLeft++;
+      if (isWhite(x + off * m.uy, y - off * m.ux)) faceRight++;
+    }
+    if (ink > 0.6 * level || colour > 0.2 * level || faceLeft < 6 || faceRight < 6) continue;
+
+    // Pips that touch the divider came along with it: whatever sticks out
+    // sideways beyond the bar's own thickness is split off again.
+    const along = (i) => ((i % w) - m.x) * m.ux + (Math.floor(i / w) - m.y) * m.uy;
+    for (const sign of [-1, 1]) {
+      const side = members.filter((i) => {
+        const t = -((i % w) - m.x) * m.uy + (Math.floor(i / w) - m.y) * m.ux;
+        return sign * t > thick / 2 + 1.5;
+      });
+      side.sort((p, q) => along(p) - along(q));
+      let run = [];
+      for (let k = 0; k < side.length; k++) {
+        if (run.length && along(side[k]) - along(side[k - 1]) > 2) {
+          addPip(run);
+          run = [];
+        }
+        run.push(side[k]);
+      }
+      addPip(run);
+    }
+    // Point the bar so that its first side is the left half of the tile (or
+    // the top half, for a tile standing upright in the picture).
+    const leftFirst = Math.abs(m.uy) >= Math.abs(m.ux) ? m.uy < 0 : m.ux > 0;
+    const flip = leftFirst ? 1 : -1;
+    dividers.push({ x: m.x, y: m.y, ux: flip * m.ux, uy: flip * m.uy, length, thick, halves: [[], []], mark: label[members[0]] });
+  }
+
+  const typical = median(dividers.map((d) => d.length));
+  const kept = dividers.filter((d) => ratio(d.length, typical) < 2.2);
+  const barMarks = new Set(kept.map((d) => d.mark));
+
+  // Each pip goes to the divider it is best placed beside: within reach
+  // sideways, level with the bar, and with nothing but tile between the two.
+  // "Level with the bar" depends on which way the tile's long axis runs in the
+  // picture. Square-on it is at right angles to the divider; for a tile seen
+  // at an angle it is not. So assign once with a generous allowance, read the
+  // axis off the rows of pips, and assign again properly.
+  for (const d of kept) {
+    d.ax = -d.uy;
+    d.ay = d.ux;
+  }
+  const assign = (allowSlant) => {
+    for (const d of kept) d.halves = [[], []];
+    for (const pip of pips) {
+      let best = null;
+      let bestScore = Infinity;
+      for (const d of kept) {
+        if (pip.area > 0.6 * d.length * d.length) continue;
+        const rx = pip.x - d.x;
+        const ry = pip.y - d.y;
+        const t = -rx * d.uy + ry * d.ux;
+        // Position as (along the bar, along the tile's long axis).
+        const det = d.ux * d.ay - d.uy * d.ax;
+        const s = (rx * d.ay - ry * d.ax) / det;
+        const slanted = allowSlant || !d.axisKnown;
+        const level = slanted ? 0.55 * d.length + 0.5 * Math.abs(t) : 0.7 * d.length;
+        if (Math.abs(t) > 1.9 * d.length || Math.abs(s) > level) continue;
+        const score = Math.abs(s) / level + 0.2 * (Math.abs(t) / (1.9 * d.length));
+        if (score >= bestScore) continue;
+        const fromS = Math.max(-0.5 * d.length, Math.min(0.5 * d.length, s));
+        const rim = Math.max(3, Math.round(0.1 * d.length));
+        if (!clearPath(d.x + fromS * d.ux, d.y + fromS * d.uy, pip.x, pip.y, rim)) continue;
+        best = { d, side: t < 0 ? 0 : 1 };
+        bestScore = score;
+      }
+      if (best) best.d.halves[best.side].push(pip);
+    }
+  };
+  assign(true);
+
+  // Rows of pips run along the tile's long axis. Try each plausible direction
+  // and keep the one along which the tile's pips fall into the fewest, tightest
+  // rows; a tile needs a handful of pips for that to mean anything.
+  let sum2x = 0;
+  let sum2y = 0;
+  let voters = 0;
+  for (const d of kept) {
+    const own = d.halves.flat();
+    if (Math.max(d.halves[0].length, d.halves[1].length) < 4) continue;
+    let bestCost = Infinity;
+    for (let deg = -44; deg <= 44; deg += 2) {
+      const turn = (deg * Math.PI) / 180;
+      const ax = -d.uy * Math.cos(turn) - d.ux * Math.sin(turn);
+      const ay = -d.uy * Math.sin(turn) + d.ux * Math.cos(turn);
+      const det = d.ux * ay - d.uy * ax;
+      const rows = own.map((p) => ((p.x - d.x) * ay - (p.y - d.y) * ax) / det).sort((m, n) => m - n);
+      let count = 1;
+      let spread = 0;
+      let start = 0;
+      for (let i = 1; i <= rows.length; i++) {
+        if (i === rows.length || rows[i] - rows[i - 1] > 0.13 * d.length) {
+          spread += rows[i - 1] - rows[start];
+          if (i < rows.length) count++;
+          start = i;
+        }
+      }
+      const cost = count + spread / (0.13 * d.length * rows.length) + Math.abs(deg) / 1000;
+      if (cost < bestCost) {
+        bestCost = cost;
+        d.ax = ax;
+        d.ay = ay;
+      }
+    }
+    d.axisKnown = true;
+    const angle = 2 * Math.atan2(d.ay, d.ax);
+    sum2x += Math.cos(angle);
+    sum2y += Math.sin(angle);
+    voters++;
+  }
+  // Tiles with too few pips to tell borrow the direction the others agree on
+  // (a hand stood up in rows all faces the same way).
+  if (voters >= 2 && Math.hypot(sum2x, sum2y) > 0.85 * voters) {
+    const angle = Math.atan2(sum2y, sum2x) / 2;
+    for (const d of kept) {
+      if (d.axisKnown) continue;
+      let ax = Math.cos(angle);
+      let ay = Math.sin(angle);
+      const away = -ax * d.uy + ay * d.ux;
+      if (Math.abs(away) < 0.5) continue;
+      if (away < 0) (ax = -ax), (ay = -ay);
+      d.ax = ax;
+      d.ay = ay;
+      d.axisKnown = true;
+    }
+  }
+  assign(false);
+
+  // What one pip measures: taken from the tile's own pips where it has a few,
+  // since tiles nearer the camera are bigger, otherwise from the whole photo.
+  const perLength = median(
+    kept.flatMap((d) => d.halves.flat().filter((p) => p.round).map((p) => p.area / (d.length * d.length))),
+  );
+  const tiles = [];
+  for (const d of kept) {
+    const nx = d.ax;
+    const ny = d.ay;
+    // How far the tile reaches either side of the divider.
+    const reach = [-1, 1].map((dir) => {
+      let gone = 0;
+      let far = 0;
+      for (let step = 1; step <= 3 * d.length && gone < 3; step++) {
+        const x = Math.round(d.x + dir * step * nx);
+        const y = Math.round(d.y + dir * step * ny);
+        if (!onTile(x, y)) {
+          gone++;
+          continue;
+        }
+        // Running into another tile's divider means the face ended on the way.
+        const mark = label[y * w + x];
+        if (mark !== d.mark && barMarks.has(mark)) break;
+        gone = 0;
+        far = step;
+      }
+      return far;
+    });
+    const own = d.halves.flat().map((p) => p.area);
+    const expected = perLength * d.length * d.length;
+    let unit = own.length >= 3 ? median(own) : expected;
+    // Marks far too small or too large for this divider are not its pips.
+    if (expected && ratio(unit, expected) > 3) unit = 0;
+    const counts = d.halves.map((half) => {
+      let count = 0;
+      let sure = true;
+      for (const pip of half) {
+        if (!unit || pip.area < 0.4 * unit) continue;
+        const n = Math.round(pip.area / unit);
+        if (n > 3) {
+          sure = false;
+          continue;
+        }
+        if (n !== 1 || !pip.round) sure = false;
+        count += Math.max(1, n);
+      }
+      return { count, sure };
+    });
+    const open = reach.every((r) => r >= 2.9 * d.length);
+    const shut = reach.some((r) => r < 0.5 * d.length);
+    // A bar in the middle of a wide white sheet is a pen or a line of print;
+    // a bar with no pips and no room for a half beside it is a shadow.
+    if (open || (shut && counts[0].count + counts[1].count === 0)) continue;
+    const [r0, r1] = reach.map((r) => Math.min(Math.max(r, 0.9 * d.length), 1.8 * d.length));
+    const hx = 0.75 * d.length * d.ux;
+    const hy = 0.75 * d.length * d.uy;
+    const corners = [
+      [d.x - r0 * nx - hx, d.y - r0 * ny - hy],
+      [d.x - r0 * nx + hx, d.y - r0 * ny + hy],
+      [d.x + r1 * nx + hx, d.y + r1 * ny + hy],
+      [d.x + r1 * nx - hx, d.y + r1 * ny - hy],
+    ];
+    // Something running off the edge of the photo cannot be read as a tile.
+    const slack = 0.25 * d.length;
+    if (corners.some(([x, y]) => x < -slack || y < -slack || x > w + slack || y > h + slack)) continue;
+    tiles.push({
+      a: Math.min(counts[0].count, maxPips),
+      b: Math.min(counts[1].count, maxPips),
+      sure: counts.every((c) => c.sure && c.count <= maxPips),
+      corners,
+      cx: d.x,
+      cy: d.y,
+      length: r0 + r1,
+    });
+  }
+  return tiles;
+}
+
+// Centre, long-axis direction and extent of a set of pixels.
+function moments(pixels, w) {
+  let sx = 0;
+  let sy = 0;
+  for (const i of pixels) {
+    sx += i % w;
+    sy += Math.floor(i / w);
+  }
+  const x = sx / pixels.length;
+  const y = sy / pixels.length;
+  let xx = 0;
+  let yy = 0;
+  let xy = 0;
+  for (const i of pixels) {
+    const dx = (i % w) - x;
+    const dy = Math.floor(i / w) - y;
+    xx += dx * dx;
+    yy += dy * dy;
+    xy += dx * dy;
+  }
+  const angle = 0.5 * Math.atan2(2 * xy, xx - yy);
+  const ux = Math.cos(angle);
+  const uy = Math.sin(angle);
+  let s0 = Infinity;
+  let s1 = -Infinity;
+  let t0 = Infinity;
+  let t1 = -Infinity;
+  for (const i of pixels) {
+    const dx = (i % w) - x;
+    const dy = Math.floor(i / w) - y;
+    const s = dx * ux + dy * uy;
+    const t = -dx * uy + dy * ux;
+    if (s < s0) s0 = s;
+    if (s > s1) s1 = s;
+    if (t < t0) t0 = t;
+    if (t > t1) t1 = t;
+  }
+  return { x, y, ux, uy, s0, s1, stretch: (s1 - s0 + 1) / (t1 - t0 + 1) };
 }
 
 // Tile outlines (centre, long-axis direction, width, length) in full-size pixels.
@@ -748,7 +1185,19 @@ function readPatch(frame, full) {
       );
     }
   }
-  return { halves: [readHalf(patch, P, 0), readHalf(patch, P, 1)] };
+  // Is there a dark stroke across the middle, where a divider would be?
+  let crossed = 0;
+  for (let i = Math.round(0.15 * P); i < Math.round(0.85 * P); i++) {
+    let lowest = 255;
+    let brightest = 0;
+    for (let j = Math.round(0.8 * P); j < Math.round(1.2 * P); j++) {
+      const v = patch[j * P + i];
+      if (v > brightest) brightest = v;
+      if (Math.abs(j - P) <= 0.07 * P && v < lowest) lowest = v;
+    }
+    if (lowest < 0.9 * brightest) crossed++;
+  }
+  return { halves: [readHalf(patch, P, 0), readHalf(patch, P, 1)], divider: crossed >= 0.35 * P };
 }
 
 function readHalf(patch, P, which) {

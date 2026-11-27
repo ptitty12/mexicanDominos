@@ -26,15 +26,15 @@ plans tie on one they are ranked by the other.
 The reader is plain image processing, not a trained model, so it wants a clear
 picture:
 
-- tiles **face up** on a **plain surface darker than the tiles**, all fully
-  inside the frame
-- a small gap between tiles is best; a neat row of touching tiles, or tiles
-  end to end, also works
-- shoot from roughly overhead, without glare or hard shadows
+- tiles **standing on edge or lying flat**, on a surface **darker than the
+  tiles**, close enough that the pips are distinct
+- **every tile fully in view** — pips hidden behind another tile cannot be
+  counted, so spread the hand out sideways rather than in rows front to back
+- face-down tiles elsewhere on the table are ignored
 
-It expects light tiles with dark or coloured pips. Tiles in a loose pile
-touching at odd angles, dark tiles with white pips, and busy tablecloths are
-unreliable — which is why every reading can be fixed by hand.
+It expects light tiles with dark or coloured pips and a visible divider.
+Dark tiles with white pips and busy tablecloths are unreliable — which is why
+every reading can be fixed by hand.
 
 ## Running it
 
@@ -54,7 +54,7 @@ works too: serve the repository root.
 | File | What it does |
 | --- | --- |
 | `js/solver.js` | A hand is a multigraph (pip values are nodes, tiles are edges), a train is a trail through it. An exact branch-and-bound search finds the best trail from each open end; it is checked against brute force in the tests. Hands past ~25 tiles can hit the one-second budget, and the page says so when they do. |
-| `js/detect.js` | Finds tiles and counts pips: brightness segmentation, rotated-rectangle fitting, splitting of touching tiles along seams, then pip counting in each straightened half. |
+| `js/detect.js` | Finds tiles and counts pips. The main reader finds each tile's divider bar and counts the pips either side of it, which copes with tiles standing on edge and seen at an angle. A second reader works from tile outlines for sets whose divider is too faint to find. |
 | `js/domino.js` | Draws tiles as SVG. |
 | `js/app.js` | The page: photo handling, the editable hand, settings, results. |
 
@@ -70,4 +70,5 @@ node tools/eval_detect.mjs /tmp/photos
 ```
 
 These are renders, not real photographs, so treat the scores as a regression
-check rather than a promise about any particular camera and table.
+check rather than a promise about any particular camera and table. The
+divider reader was tuned on one real photo of a hand stood on edge.

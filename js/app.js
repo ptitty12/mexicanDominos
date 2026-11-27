@@ -346,7 +346,7 @@ async function readPhoto(file, append, example = false) {
 
   if (!tiles.length) {
     setStatus(
-      'No dominoes found in that photo. It works best with the tiles face up on a plain, darker surface — or add them by hand with +.',
+      'No dominoes found in that photo. It needs light tiles on a darker surface, close enough to see the pips. You can also add tiles by hand with +.',
       true,
     );
     return;
