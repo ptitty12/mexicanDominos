@@ -147,11 +147,11 @@ def perspective(img, rng, strength):
     return img.transform((W, H), Image.PERSPECTIVE, tuple(coeffs), Image.BICUBIC, fillcolor=edge), move
 
 
-def make_case(seed, layout, max_pips=12, count=None, size=(1600, 1200), hard=False):
+def make_case(seed, layout, max_pips=12, count=None, size=(1600, 1200), hard=False, tiles=None):
     rng = random.Random(seed)
     W, H = size
-    count = count or rng.randint(6, 15)
-    tiles = []
+    tiles = list(tiles or [])
+    count = len(tiles) or count or rng.randint(6, 15)
     while len(tiles) < count:
         a, b = rng.randint(0, max_pips), rng.randint(0, max_pips)
         if (min(a, b), max(a, b)) not in [(min(x), max(x)) for x in tiles]:
