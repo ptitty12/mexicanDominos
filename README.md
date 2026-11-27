@@ -45,8 +45,9 @@ npm start        # serves the folder at http://localhost:8000
 npm test         # solver and detector tests (Node 20+, no dependencies)
 ```
 
-To host it, serve the repository root from any static host. On GitHub:
-*Settings → Pages → Deploy from a branch → `main` / root*.
+To host it on a VPS with Dokploy (how `dominos.ptaylor.dev` is set up), follow
+[`docs/DEPLOY_DOKPLOY.md`](docs/DEPLOY_DOKPLOY.md). Any other static host
+works too: serve the repository root.
 
 ## How it works
 

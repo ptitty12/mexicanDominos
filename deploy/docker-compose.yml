@@ -1,0 +1,13 @@
+# Mexican Train solver, for a Dokploy "Docker Compose" app
+# (compose path ./deploy/docker-compose.yml; the owner's guide: docs/DEPLOY_DOKPLOY.md).
+#
+#   dominos   nginx serving the static site on port 8080. Dokploy's Traefik
+#             gives it the domain and HTTPS; no port is published on the host.
+services:
+  dominos:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    expose:
+      - "8080"
