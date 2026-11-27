@@ -29,6 +29,10 @@ function save() {
   }
 }
 
+// The example that loads by itself on a first visit is only wanted while the
+// visitor has not started on a hand of their own.
+let wantAutoExample = !saved;
+
 function update() {
   save();
   renderHand();
@@ -74,6 +78,7 @@ function addButton() {
 }
 
 $('hand-clear').addEventListener('click', () => {
+  wantAutoExample = false;
   state.hand = [];
   state.example = false;
   $('photo').hidden = true;
@@ -111,6 +116,7 @@ function renderEditor() {
 
 $('editor').querySelector('form').addEventListener('submit', (event) => {
   event.preventDefault();
+  wantAutoExample = false;
   const tile = { a: editor.a, b: editor.b };
   if (editor.index === null) state.hand.push(tile);
   else state.hand[editor.index] = tile;
@@ -120,6 +126,7 @@ $('editor').querySelector('form').addEventListener('submit', (event) => {
 });
 
 $('editor-delete').addEventListener('click', () => {
+  wantAutoExample = false;
   state.hand.splice(editor.index, 1);
   state.example = false;
   $('editor').close();
@@ -133,7 +140,7 @@ $('editor').addEventListener('click', (event) => {
 
 // ------------------------------------------------------------------ table
 
-function numberButtons(container, max, { checked, onPick, toggle = false }) {
+function numberButtons(container, max, { checked, onPick, toggle = false, times = () => 1 }) {
   const focused = container.contains(document.activeElement)
     ? Number(document.activeElement.dataset.n)
     : null;
@@ -141,7 +148,9 @@ function numberButtons(container, max, { checked, onPick, toggle = false }) {
     ...Array.from({ length: max + 1 }, (_, n) => {
       const button = document.createElement('button');
       button.type = 'button';
-      button.textContent = n;
+      // "3 ×2": two other trains both end on a 3.
+      button.textContent = times(n) > 1 ? `${n} ×${times(n)}` : n;
+      if (times(n) > 1) button.setAttribute('aria-label', `${n}, ${times(n)} trains`);
       button.dataset.n = n;
       button.style.setProperty('--pip', n ? pipColor(n) : 'transparent');
       if (toggle) button.setAttribute('aria-pressed', checked(n));
@@ -168,10 +177,13 @@ function renderTable() {
   numberButtons($('others'), state.setMax, {
     toggle: true,
     checked: (n) => state.others.includes(n),
+    times: (n) => state.others.filter((x) => x === n).length,
+    // Tap once for one train ending on this number, again for a second, and
+    // a third time to clear it.
     onPick: (n) => {
-      state.others = state.others.includes(n)
-        ? state.others.filter((x) => x !== n)
-        : [...state.others, n].sort((x, y) => x - y);
+      const count = state.others.filter((x) => x === n).length;
+      const rest = state.others.filter((x) => x !== n);
+      state.others = (count >= 2 ? rest : [...rest, ...new Array(count + 1).fill(n)]).sort((x, y) => x - y);
       update();
     },
   });
@@ -298,19 +310,28 @@ function pickPhoto(append) {
 
 $('photo-input').addEventListener('change', (event) => {
   const [file] = event.target.files;
-  if (file) readPhoto(file, appendNextPhoto);
+  if (!file) return;
+  wantAutoExample = false;
+  readPhoto(file, appendNextPhoto);
 });
 
-$('photo-example').addEventListener('click', () => loadExample());
+$('photo-example').addEventListener('click', () => {
+  wantAutoExample = false;
+  loadExample();
+});
 
-async function loadExample({ quiet = false } = {}) {
-  if (!quiet) setStatus('Loading the example…');
+// `auto` is the unprompted first-visit load: it stays quiet, and gives way the
+// moment the visitor does anything to the hand themselves.
+async function loadExample({ auto = false } = {}) {
+  const stale = () => auto && !wantAutoExample;
+  if (!auto) setStatus('Loading the example…');
   try {
     const response = await fetch('examples/hand.jpg');
     if (!response.ok) throw new Error(response.statusText);
-    await readPhoto(await response.blob(), false, true);
+    const photo = await response.blob();
+    if (!stale()) await readPhoto(photo, false, true, stale);
   } catch {
-    if (!quiet) setStatus('The example photo could not be loaded.', true);
+    if (!auto) setStatus('The example photo could not be loaded.', true);
   }
 }
 
@@ -319,7 +340,7 @@ function setStatus(text, problem = false) {
   $('photo-status').classList.toggle('problem', problem);
 }
 
-async function readPhoto(file, append, example = false) {
+async function readPhoto(file, append, example = false, stale = () => false) {
   setStatus('Reading your dominoes…');
   let source;
   try {
@@ -328,6 +349,7 @@ async function readPhoto(file, append, example = false) {
     setStatus('That file could not be opened as a picture.', true);
     return;
   }
+  if (stale()) return;
   const canvas = $('photo-canvas');
   const shrink = Math.min(1, PHOTO_SIDE / Math.max(source.width, source.height));
   canvas.width = Math.round(source.width * shrink);
@@ -340,6 +362,7 @@ async function readPhoto(file, append, example = false) {
   // Let the photo and the status line paint before the heavy part.
   await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
 
+  if (stale()) return;
   const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const { tiles } = detectDominoes(image, { maxPips: state.setMax });
   drawOutlines(ctx, tiles);
@@ -415,4 +438,4 @@ function drawOutlines(ctx, tiles) {
 
 update();
 // A first visit opens on the example, so the page shows what it does.
-if (!saved) loadExample({ quiet: true });
+if (wantAutoExample) loadExample({ auto: true });
