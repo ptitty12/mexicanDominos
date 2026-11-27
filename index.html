@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mexican Train Solver</title>
+  <meta name="description" content="Photograph your dominoes and get the longest train you can play.">
+  <meta name="theme-color" content="#14614f">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 50 100'%3E%3Crect x='2' y='2' width='46' height='96' rx='8' fill='%23faf6ea' stroke='%23333' stroke-width='3'/%3E%3Cline x1='8' y1='50' x2='42' y2='50' stroke='%23333' stroke-width='3'/%3E%3Ccircle cx='25' cy='26' r='7' fill='%23d7263d'/%3E%3Ccircle cx='15' cy='64' r='6' fill='%231f47a8'/%3E%3Ccircle cx='35' cy='86' r='6' fill='%231f47a8'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="masthead">
+    <h1>Mexican Train Solver</h1>
+    <p>Photograph your dominoes and see the longest train you can lay.</p>
+  </header>
+
+  <main>
+    <section class="card" aria-labelledby="hand-title">
+      <h2 id="hand-title"><span class="step">1</span> Your dominoes</h2>
+
+      <div class="photo-actions">
+        <button type="button" class="primary" id="photo-new">Take or choose a photo</button>
+        <button type="button" id="photo-add" hidden>Add another photo</button>
+        <button type="button" class="quiet" id="photo-example">Try an example photo</button>
+        <input type="file" id="photo-input" accept="image/*" hidden>
+      </div>
+      <p class="hint" id="photo-hint">
+        Tiles can stand on edge or lie flat, on a surface darker than they are.
+        Keep every tile fully in view: pips hidden behind another tile can't be counted.
+      </p>
+
+      <figure class="photo" id="photo" hidden>
+        <canvas id="photo-canvas"></canvas>
+      </figure>
+      <p class="status" id="photo-status" role="status" aria-live="polite"></p>
+
+      <div class="hand" id="hand"></div>
+      <div class="hand-footer">
+        <span id="hand-count"></span>
+        <button type="button" class="quiet" id="hand-clear" hidden>Clear all</button>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="table-title">
+      <h2 id="table-title"><span class="step">2</span> The table</h2>
+
+      <div class="field">
+        <label for="set-size">Domino set</label>
+        <select id="set-size">
+          <option value="6">Double-six</option>
+          <option value="9">Double-nine</option>
+          <option value="12">Double-twelve</option>
+          <option value="15">Double-fifteen</option>
+          <option value="18">Double-eighteen</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <span class="label" id="start-label">Your train starts at</span>
+        <p class="hint">This round's engine double — or the open end of your train if you've already started.</p>
+        <div class="numbers" id="start" role="radiogroup" aria-labelledby="start-label"></div>
+      </div>
+
+      <div class="field">
+        <span class="label" id="others-label">Other ends you can play on <span class="optional">optional</span></span>
+        <p class="hint">The Mexican train, or another player's train that is marked open. Tap a number twice if two of them end on it.</p>
+        <div class="numbers" id="others" role="group" aria-labelledby="others-label"></div>
+      </div>
+
+      <div class="field">
+        <span class="label" id="goal-label">Aim for</span>
+        <div class="segmented" id="goal" role="radiogroup" aria-labelledby="goal-label">
+          <button type="button" role="radio" data-goal="tiles">Most tiles played</button>
+          <button type="button" role="radio" data-goal="pips">Most points played</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="result-title">
+      <h2 id="result-title"><span class="step">3</span> Best play</h2>
+      <div id="result" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <footer class="colophon">
+    Everything runs in your browser — your photo is never uploaded.
+  </footer>
+
+  <dialog id="editor" aria-labelledby="editor-title">
+    <form method="dialog">
+      <h2 id="editor-title">Edit tile</h2>
+      <div class="editor-body">
+        <div class="editor-preview" id="editor-preview"></div>
+        <div class="editor-halves">
+          <span class="label" id="editor-a-label">Top half</span>
+          <div class="numbers" id="editor-a" role="radiogroup" aria-labelledby="editor-a-label"></div>
+          <span class="label" id="editor-b-label">Bottom half</span>
+          <div class="numbers" id="editor-b" role="radiogroup" aria-labelledby="editor-b-label"></div>
+        </div>
+      </div>
+      <div class="editor-actions">
+        <button type="button" class="danger" id="editor-delete">Remove tile</button>
+        <button type="submit" class="primary" id="editor-done">Done</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

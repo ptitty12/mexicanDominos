@@ -1,0 +1,7 @@
+# The image only needs the page itself; see deploy/Dockerfile.
+*
+!index.html
+!css
+!js
+!examples
+!deploy/nginx.conf
